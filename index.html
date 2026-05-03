@@ -441,7 +441,11 @@
         const evaEyeMeshes = [];   // populated during model load — the actual eye geometry
         const evaEyeOriginals = []; // { mesh, position, quaternion, scale } for delta-based tuning
 
-        loader.load('https://cdn.jsdelivr.net/gh/JDFBdev/EVATEST@main/EVA/scene.gltf', function (gltf) {
+        // GLTFLoader: kept on raw.githubusercontent.com because jsDelivr's GitHub
+        // mirror caps individual files at 20MB and our scene.bin is 24MB. Raw has
+        // no size limit, serves binary correctly, and the GLTF's relative refs to
+        // scene.bin / textures/* will resolve against this base URL automatically.
+        loader.load('https://raw.githubusercontent.com/JDFBdev/EVATEST/main/EVA/scene.gltf', function (gltf) {
             eva = gltf.scene;
             eva.position.set(0, 0, 0);
             eva.scale.set(.01, .01, .01);
