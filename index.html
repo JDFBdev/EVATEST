@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script type="importmap">
+{
+    "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.163.0/examples/jsm/",
+    "lenis": "https://cdn.jsdelivr.net/npm/lenis@1.1.20/+esm"
+    } 
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+
+    <section class="hero">
+        <canvas></canvas>
+        <div class="hero-title-jp" aria-hidden="true">
+            <img src="title%20japanese.svg" alt="">
+        </div>
+        <div class="hero-title">
+            <div class="hero-title__neon">NEON GENESIS</div>
+            <div class="hero-title__eva">EVANGELION</div>
+        </div>
+    </section>
+
+    <div class="kf-editor hidden" id="kf-editor">
+        <div class="kf-header">
+            <strong>Keyframe Editor</strong>
+            <button id="kf-collapse" title="Toggle (K)">—</button>
+        </div>
+        <div class="kf-body">
+            <label class="kf-row">
+                <input type="checkbox" id="kf-author">
+                <span>Author mode <em>(free orbit, scroll paused)</em></span>
+            </label>
+            <div class="kf-readout" id="kf-readout">scroll: 0%</div>
+            <div class="kf-actions">
+                <button id="kf-capture" title="Capture pose at current scroll position">+ Capture</button>
+                <button id="kf-export"  title="Copy keyframes as JS code">Copy code</button>
+                <button id="kf-reset"   title="Restore default keyframes" class="danger">Reset</button>
+            </div>
+            <div class="kf-list" id="kf-list"></div>
+            <div class="kf-hint">Tip: scroll to a position, flip on Author mode, drag to orbit, then Capture. Press <kbd>K</kbd> to hide.</div>
+
+            <div class="kf-section">
+                <strong>Eyes</strong>
+                <div class="kf-readout" id="eye-readout">L  (0.00, 0.00, 0.00)\nR  (0.00, 0.00, 0.00)</div>
+                <div class="kf-actions">
+                    <button id="eye-pick-L" title="Click on the model to place the LEFT eye">Pick L</button>
+                    <button id="eye-pick-R" title="Click on the model to place the RIGHT eye">Pick R</button>
+                    <button id="eye-copy"   title="Copy both eye positions as code">Copy pos</button>
+                </div>
+                <div class="kf-hint">Click <strong>Pick L</strong> or <strong>Pick R</strong>, then click on the model. Click again to refine. Click the same button to disarm.</div>
+            </div>
+
+            <div class="kf-section">
+                <strong>Eye mesh align</strong>
+                <div class="kf-sliders" id="eye-adjust-sliders"></div>
+                <div class="kf-actions">
+                    <button id="eye-adjust-reset" class="danger" title="Reset alignment to defaults">Reset</button>
+                    <button id="eye-adjust-copy"  title="Copy current alignment as code">Copy align</button>
+                </div>
+                <div class="kf-hint">Drag sliders to nudge the glowing eye mesh into alignment.</div>
+            </div>
+        </div>
+    </div>
+
+    <section class="section">
+        <div class="container">
+            <h2>Section One</h2>
+            <p>Placeholder content. Replace this with whatever you want — copy, images, a grid of cards, a feature list, anything. The hero stays pinned above as you arrive here, then the parallax has fully resolved by the time this comes into view.</p>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="container">
+            <h2>Section Two</h2>
+            <p>Another placeholder block. Each section is set to roughly a viewport tall so you have plenty of room to scroll-test the parallax behavior in the hero above.</p>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="container">
+            <h2>Section Three</h2>
+            <p>Drop your real content into these sections. The styling is intentionally minimal — alternating dark backgrounds, generous padding, and a soft border between sections.</p>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="container">
+            <h2>Section Four</h2>
+            <p>End of the page. Scroll back up to see the parallax in reverse.</p>
+        </div>
+    </section>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+        import Lenis from 'lenis';
+
+        var scene = new THREE.Scene();
+        // Solid color fallback while the bg image loads.
+        scene.background = new THREE.Color( 0x09001c );
+
+        // Hangar background — fills the canvas with a CSS "cover" behavior so the
+        // image isn't stretched. The texture goes through the post-processing chain
+        // automatically (warm grade, scanlines, chromatic aberration, vignette).
+        // The texture downloads in parallel with the model, but we only assign it
+        // as `scene.background` once the model is in the scene — so the bg never
+        // appears before the EVA does.
+        let bgTexture = null;
+        let modelLoaded = false;
+        new THREE.TextureLoader().load('background%20hangar.webp', (tex) => {
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.minFilter = THREE.LinearFilter; // avoid mipmap artifacts on the bg quad
+            tex.matrixAutoUpdate = false;
+            bgTexture = tex;
+            fitBackgroundCover(tex);
+            if (modelLoaded) scene.background = tex;
+        });
+
+        function fitBackgroundCover(tex) {
+            if (!tex || !tex.image) return;
+            const { w, h } = heroSize();
+            const imgAspect    = tex.image.width  / tex.image.height;
+            const canvasAspect = w / h;
+            if (canvasAspect > imgAspect) {
+                // Canvas wider than image — fit width, crop top/bottom
+                const sy = imgAspect / canvasAspect;
+                tex.matrix.set(1, 0, 0, 0, sy, (1 - sy) / 2, 0, 0, 1);
+            } else {
+                // Canvas taller than image — fit height, crop sides
+                const sx = canvasAspect / imgAspect;
+                tex.matrix.set(sx, 0, (1 - sx) / 2, 0, 1, 0, 0, 0, 1);
+            }
+        }
+
+        // Hero is 80vh — keep the renderer & camera locked to that, not the full viewport.
+        const HERO_VH = 0.8;
+        const heroSize = () => ({ w: window.innerWidth, h: window.innerHeight * HERO_VH });
+
+        // Orthographic camera: no perspective foreshortening → objects look flat regardless of rotation
+        let frustumSize = 22;
+        const { w: hw, h: hh } = heroSize();
+        const aspect = hw / hh;
+        var camera = new THREE.OrthographicCamera(
+            -frustumSize * aspect / 2,
+             frustumSize * aspect / 2,
+             frustumSize / 2,
+            -frustumSize / 2,
+            0.1, 1000
+        );
+        camera.position.set(0, 0, 20);
+        camera.lookAt(scene.position);
+
+        var renderer = new THREE.WebGLRenderer({
+            antialias: false,
+            powerPreference: 'high-performance', // prefer dGPU on dual-GPU laptops
+        });
+        // Cap DPR at 2 — on 3x/4x screens the GPU work scales quadratically with no
+        // perceptible visual gain (FXAA already smooths edges).
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(hw, hh);
+        // Use the canvas already in the hero section instead of appending a new one
+        const heroCanvas = document.querySelector('.hero canvas');
+        if (heroCanvas) {
+            heroCanvas.replaceWith(renderer.domElement);
+        } else {
+            document.body.appendChild(renderer.domElement);
+        }
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+
+        // Light from the side so the shadow terminator cuts across the model visibly
+        const dirLight = new THREE.DirectionalLight(0xffffff, 5.5);
+        dirLight.position.set(4, 3, 2);
+        scene.add(dirLight);
+        // Keep ambient low — if it's too high every surface stays in the "lit" gradient step
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
+        scene.add(ambientLight);
+
+        // 3-step gradient: shadow / midtone / lit — the classic anime shading look
+        const format = renderer.capabilities.isWebGL2 ? THREE.RedFormat : THREE.LuminanceFormat;
+        const gradientMap = new THREE.DataTexture(new Uint8Array([0, 128, 255]), 3, 1, format);
+        gradientMap.minFilter = THREE.NearestFilter;
+        gradientMap.magFilter = THREE.NearestFilter;
+        gradientMap.needsUpdate = true;
+
+        // Post-processing stack
+        const composer = new EffectComposer(renderer);
+        composer.addPass(new RenderPass(scene, camera));
+
+        // OutlinePass at half resolution — biggest single GPU win in the chain.
+        // The pass internally re-renders the masked scene + does edge detection;
+        // running it at half size cuts that cost ~75% with the upscale virtually
+        // imperceptible against the toon-shaded silhouette.
+        const OUTLINE_DOWNSAMPLE = 2;
+        const outlinePass = new OutlinePass(
+            new THREE.Vector2(hw / OUTLINE_DOWNSAMPLE, hh / OUTLINE_DOWNSAMPLE),
+            scene,
+            camera
+        );
+        outlinePass.edgeStrength = 8.0;
+        outlinePass.edgeGlow = 0.0;
+        outlinePass.edgeThickness = 0.1;
+        outlinePass.visibleEdgeColor.set('#5c5c5c');
+        outlinePass.hiddenEdgeColor.set('#5c5c5c');
+        composer.addPass(outlinePass);
+
+        // 90s anime post-processing: chromatic aberration + scanlines + vignette + warm film grade
+        const animePass = new ShaderPass({
+            uniforms: {
+                tDiffuse:            { value: null },
+                time:                { value: 0.0 },
+                resolution:          { value: new THREE.Vector2(hw, hh) },
+                chromaticAberration: { value: 0.005 },
+                scanStrength:        { value: 0     }, // moved to CSS overlay on .hero
+                vignetteStrength:    { value: 2.5   },
+                warmMix:             { value: 0.40  },
+                filmLift:            { value: 0  },
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float time;
+                uniform vec2 resolution;
+                uniform float chromaticAberration;
+                uniform float scanStrength;
+                uniform float vignetteStrength;
+                uniform float warmMix;
+                uniform float filmLift;
+                varying vec2 vUv;
+
+                void main() {
+                    vec2 uv = vUv;
+                    vec2 dir = uv - 0.5;
+
+                    float r = texture2D(tDiffuse, uv + dir * chromaticAberration).r;
+                    float g = texture2D(tDiffuse, uv).g;
+                    float b = texture2D(tDiffuse, uv - dir * chromaticAberration).b;
+                    vec3 color = vec3(r, g, b);
+
+                    float scan = sin(uv.y * resolution.y * 1.5) * scanStrength;
+                    color -= scan;
+
+                    float vig = 1.0 - dot(dir, dir) * vignetteStrength;
+                    color *= clamp(vig, 0.0, 1.0);
+
+                    float lum = dot(color, vec3(0.299, 0.587, 0.114));
+                    vec3 warm = vec3(lum * 1.1, lum * 0.92, lum * 0.72);
+                    color = mix(color, warm, warmMix);
+
+                    color = color * (1.0 - filmLift * 2.0) + filmLift;
+
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `,
+        });
+        composer.addPass(animePass);
+
+        const fxaaPass = new ShaderPass(FXAAShader);
+        const _initDpr = Math.min(window.devicePixelRatio, 2);
+        fxaaPass.uniforms['resolution'].value.set(1 / (hw * _initDpr), 1 / (hh * _initDpr));
+        composer.addPass(fxaaPass);
+
+        const loader = new GLTFLoader();
+        var eva;
+
+        // CSS-style cubic-bezier(x1, y1, x2, y2). Returns a function that maps
+        // a linear progress t∈[0,1] to the eased y value, matching CSS semantics.
+        function makeCubicBezier(x1, y1, x2, y2) {
+            const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+            const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+            const sampleX = t => ((ax * t + bx) * t + cx) * t;
+            const sampleY = t => ((ay * t + by) * t + cy) * t;
+            const sampleDX = t => (3 * ax * t + 2 * bx) * t + cx;
+            return function (x) {
+                if (x <= 0) return 0;
+                if (x >= 1) return 1;
+                let p = x;
+                for (let i = 0; i < 8; i++) {
+                    const dx = sampleX(p) - x;
+                    if (Math.abs(dx) < 1e-6) break;
+                    const d = sampleDX(p);
+                    if (Math.abs(d) < 1e-6) break;
+                    p -= dx / d;
+                }
+                return sampleY(p);
+            };
+        }
+
+        // ── Glowing eyes ──────────────────────────────────────────────────
+        // Tweak these to taste; positions are set via the picker buttons below.
+        const EYE_COLOR    = 0xffe833;   // warm yellow
+        const EYE_DELAY_MS = 700;        // when the glow starts (after model load)
+        const EYE_FADE_MS  = 1100;       // duration of the pop-in
+        const EYE_HALO_SIZE = 0.5;       // halo sprite size in world units
+        const EYE_HALO_OPACITY  = 0.25;  // lower = softer / more diffuse
+        const EYE_LIGHT_INTENSITY = 0.3; // dim cast light
+
+        // Flash that fires the moment the fade-in peaks — the eyes "ignite" white.
+        const FLASH_ATTACK_MS    = 8;    // ramp-up
+        const FLASH_HOLD_MS      = 15;   // brief hold at peak white
+        const FLASH_DECAY_MS     = 20;   // settle back to steady-state
+        const FLASH_LIGHT_BOOST  = 1.0;  // extra intensity added to the cast light at peak
+        const FLASH_HALO_GROW    = 0.01;  // halo grows 30% at peak
+        const FLASH_COUNT        = 2;    // number of consecutive flashes
+        const FLASH_GAP_MS       = 10;   // dark gap between flashes
+        const FLASH_DURATION_MS  = FLASH_ATTACK_MS + FLASH_HOLD_MS + FLASH_DECAY_MS;
+        const FLASH_CYCLE_MS     = FLASH_DURATION_MS + FLASH_GAP_MS;
+        // Last flash has no gap after it.
+        const FLASH_TOTAL_MS     = FLASH_CYCLE_MS * FLASH_COUNT - FLASH_GAP_MS;
+        const FADE_END_MS        = EYE_DELAY_MS + EYE_FADE_MS;
+        const FLASH_END_MS       = FADE_END_MS + FLASH_TOTAL_MS;
+        const _flashColor        = new THREE.Color(0xffffff);
+
+        // Fine alignment for the glowing eye mesh — tune via the editor sliders, then bake here.
+        const EYE_MESH_SCALE    = 1.0;                          // uniform multiplier on original scale
+        const EYE_MESH_OFFSET   = new THREE.Vector3(0, 0, 0);   // additive world-space offset
+        const EYE_MESH_ROTATION = new THREE.Euler(0, 0, 0);     // additive Euler rotation (radians)
+        // CSS-style cubic-bezier(0.7, 0, 0.84, 0) — strong ease-in / snap-in.
+        const eyeEase = makeCubicBezier(0.7, 0, 0.84, 0);
+
+        // Soft radial-gradient texture for the halo sprite (round glow).
+        function makeRoundGlowTexture() {
+            const size = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            grad.addColorStop(0.00, 'rgba(255, 255, 255, 1.0)');
+            grad.addColorStop(0.20, 'rgba(255, 255, 255, 0.55)');
+            grad.addColorStop(0.50, 'rgba(255, 255, 255, 0.18)');
+            grad.addColorStop(1.00, 'rgba(255, 255, 255, 0.0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, size, size);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            return tex;
+        }
+
+        // Diamond/rhombus glow — uses Manhattan distance for the falloff so the
+        // shape has 4 sharp corners (top/bottom/left/right). Tweak `aspectY` to
+        // stretch it taller (EVA-01 style); `pow` controls how peaked the center is.
+        // The brightness is baked into the RGB channels (alpha is fully opaque) so
+        // the texture works as a *color mask* on an opaque plane — bright pixels
+        // show the material color, dark pixels become black, but the plane stays
+        // opaque so it occludes whatever sits behind it (e.g. the head interior).
+        function makeDiamondGlowTexture({ aspectY = 1.4, pow = 1.6 } = {}) {
+            const size = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            const img = ctx.createImageData(size, size);
+            const cx = size / 2, cy = size / 2;
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const dx = (x - cx) / cx;
+                    const dy = ((y - cy) / cy) / aspectY; // taller diamond when aspectY > 1
+                    const d = Math.abs(dx) + Math.abs(dy); // Manhattan distance ⇒ diamond
+                    const a = Math.max(0, 1 - d);
+                    const ea = Math.pow(a, pow);
+                    const v = Math.round(ea * 255);
+                    const i = (y * size + x) * 4;
+                    img.data[i + 0] = v;
+                    img.data[i + 1] = v;
+                    img.data[i + 2] = v;
+                    img.data[i + 3] = 255; // fully opaque — plane occludes interior
+                }
+            }
+            ctx.putImageData(img, 0, 0);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            return tex;
+        }
+
+        // The sprite halo provides soft bloom *around* the eyes — round looks natural.
+        const eyeGlowTexture = makeRoundGlowTexture();
+        // Reusable Color object for the eye-mesh fade-in (see animate loop).
+        const eyeBaseColor = new THREE.Color(EYE_COLOR);
+
+        // The eye-mesh material gets a diamond mask so the glow takes a sharp diamond
+        // shape inside the head's eye-cutout, even if the underlying plane is rectangular.
+        // Tune with: aspectY (taller >1, shorter <1), pow (>1 = sharper center).
+        const eyeMaskTexture = makeDiamondGlowTexture({ aspectY: 1.4, pow: 1.6 });
+        // Initial guesses — refine via the pickers.
+        const EYE_DEFAULTS = {
+            L: new THREE.Vector3(-0.146, 6.819, 1.832),
+            R: new THREE.Vector3( 0.143, 6.822, 1.837),
+        };
+
+        function makeEye(color) {
+            const group = new THREE.Group();
+            // Camera-facing soft glow — provides the bloom around the actual eye mesh.
+            const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: eyeGlowTexture,
+                color,
+                transparent: true,
+                opacity: 0,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+            }));
+            halo.scale.setScalar(EYE_HALO_SIZE);
+            const light = new THREE.PointLight(color, 0, 4);
+            group.add(halo, light);
+            return { group, halo, light };
+        }
+
+        const eyes = {
+            L: makeEye(EYE_COLOR),
+            R: makeEye(EYE_COLOR),
+        };
+        eyes.L.group.position.copy(EYE_DEFAULTS.L);
+        eyes.R.group.position.copy(EYE_DEFAULTS.R);
+        eyes.L.group.scale.setScalar(0);
+        eyes.R.group.scale.setScalar(0);
+        scene.add(eyes.L.group, eyes.R.group);
+
+        let eyeStartTime = null; // set when EVA finishes loading
+        const evaEyeMeshes = [];   // populated during model load — the actual eye geometry
+        const evaEyeOriginals = []; // { mesh, position, quaternion, scale } for delta-based tuning
+
+        loader.load('EVA/scene.gltf', function (gltf) {
+            eva = gltf.scene;
+            eva.position.set(0, 0, 0);
+            eva.scale.set(.01, .01, .01);
+
+            eva.traverse((child) => {
+                if (!child.isMesh) return;
+
+                // Detect the dedicated eye mesh(es) (name pattern from this GLTF: "*EvaEyes*")
+                if (/EvaEyes/i.test(child.name)) {
+                    evaEyeMeshes.push(child);
+                    evaEyeOriginals.push({
+                        mesh: child,
+                        position:   child.position.clone(),
+                        quaternion: child.quaternion.clone(),
+                        scale:      child.scale.clone(),
+                    });
+                    // Solid yellow opaque plane — the head's eye-cutout defines the
+                    // visible shape, so we don't need a procedural mask. Color is
+                    // animated black→yellow for the fade-in.
+                    child.material = new THREE.MeshBasicMaterial({
+                        color: 0x000000, // starts black, fades up to EYE_COLOR
+                        transparent: false,
+                        depthWrite: true,
+                        toneMapped: false,
+                    });
+                    child.renderOrder = 10;
+                    return;
+                }
+
+                // Everything else: anime-style toon shading
+                const prev = Array.isArray(child.material) ? child.material : [child.material];
+                child.material = prev.map(m => new THREE.MeshToonMaterial({
+                    color: m.color ?? new THREE.Color(0xffffff),
+                    map: m.map ?? null,
+                    gradientMap,
+                }));
+                if (child.material.length === 1) child.material = child.material[0];
+            });
+
+            scene.add(eva);
+            // Outline everything except the eye meshes — outlining the glow looks weird.
+            outlinePass.selectedObjects = [eva];
+            eyeStartTime = performance.now();
+            idleStartTime = eyeStartTime; // idle zoom starts when the model lands
+            applyEyeMeshAdjust(); // pick up bake-in constants + initial slider values
+            // Reveal the hangar bg now that the model is in the scene.
+            modelLoaded = true;
+            if (bgTexture) scene.background = bgTexture;
+        }, undefined, (error) => console.error(error));
+
+        // Eye-mesh fine alignment: applies live tuning values on top of the original transforms.
+        const eyeAdjust = {
+            scale: EYE_MESH_SCALE,
+            posX: EYE_MESH_OFFSET.x, posY: EYE_MESH_OFFSET.y, posZ: EYE_MESH_OFFSET.z,
+            rotX: EYE_MESH_ROTATION.x, rotY: EYE_MESH_ROTATION.y, rotZ: EYE_MESH_ROTATION.z,
+        };
+        const _qDelta = new THREE.Quaternion();
+        const _eDelta = new THREE.Euler();
+        function applyEyeMeshAdjust() {
+            _eDelta.set(eyeAdjust.rotX, eyeAdjust.rotY, eyeAdjust.rotZ);
+            _qDelta.setFromEuler(_eDelta);
+            for (const o of evaEyeOriginals) {
+                o.mesh.position.set(
+                    o.position.x + eyeAdjust.posX,
+                    o.position.y + eyeAdjust.posY,
+                    o.position.z + eyeAdjust.posZ
+                );
+                o.mesh.quaternion.copy(o.quaternion).multiply(_qDelta);
+                o.mesh.scale.set(
+                    o.scale.x * eyeAdjust.scale,
+                    o.scale.y * eyeAdjust.scale,
+                    o.scale.z * eyeAdjust.scale
+                );
+            }
+        }
+
+        // ── Controls panel ────────────────────────────────────────────────
+        const gui = new GUI({ title: 'Scene Controls' });
+        gui.hide();
+
+        // Camera
+        const camFolder = gui.addFolder('Camera');
+        camFolder.add({ zoom: frustumSize }, 'zoom', 3, 60, 0.5).name('zoom').onChange(v => {
+            frustumSize = v;
+            const { w, h } = heroSize();
+            const a = w / h;
+            camera.left = -v * a / 2; camera.right = v * a / 2;
+            camera.top  =  v / 2;     camera.bottom = -v / 2;
+            camera.updateProjectionMatrix();
+        });
+
+        // Outline
+        const outlineFolder = gui.addFolder('Outline');
+        outlineFolder.add(outlinePass, 'edgeStrength',  0, 20, 0.1).name('strength');
+        outlineFolder.add(outlinePass, 'edgeThickness', 0,  6, 0.1).name('thickness');
+        outlineFolder.add(outlinePass, 'edgeGlow',      0,  2, 0.05).name('glow');
+        const outlineColorParams = { color: '#5c5c5c' };
+        outlineFolder.addColor(outlineColorParams, 'color').name('outline color').onChange(v => {
+            outlinePass.visibleEdgeColor.set(v);
+            outlinePass.hiddenEdgeColor.set(v);
+        });
+
+        // Lighting
+        const lightFolder = gui.addFolder('Lighting');
+        lightFolder.add(dirLight, 'intensity', 0, 10, 0.1).name('dir light');
+        lightFolder.add(ambientLight, 'intensity', 0, 5, 0.05).name('ambient');
+
+        // Film FX
+        const fxFolder = gui.addFolder('Film FX');
+        const u = animePass.uniforms;
+        fxFolder.add(u.chromaticAberration, 'value', 0, 0.03,  0.001).name('chrom. aberration');
+        fxFolder.add(u.scanStrength,        'value', 0, 0.15,  0.005).name('scanlines');
+        fxFolder.add(u.vignetteStrength,    'value', 0, 4,     0.05 ).name('vignette');
+        fxFolder.add(u.warmMix,             'value', 0, 1,     0.01 ).name('warm grade');
+        fxFolder.add(u.filmLift,            'value', 0, 0.25,  0.005).name('film lift');
+        // ──────────────────────────────────────────────────────────────────
+
+        // ── Scroll progress ────────────────────────────────────────────────
+        // Camera keyframes drive across the hero scroll range only (0 → 80vh).
+        // Past the hero, progress clamps at 1 so the camera holds its final pose.
+        // The canvas itself is parallaxed (translated slower than scroll) for depth.
+        let scrollProgress = 0;
+        const canvasEl = renderer.domElement;
+        // Each layer's "scroll speed" relative to the page (1 = moves with content, 0 = static).
+        // Lower = appears farther away. Tuned for a layered depth: bg < mid < front.
+        const PARALLAX_RATE       = 0.4;   // canvas (background, position: fixed)
+        const TITLE_JP_PARALLAX   = 0.72;  // Japanese SVG (mid layer)
+        const TITLE_EN_PARALLAX   = 0.80;  // English title (front layer)
+
+        const heroTitleJpEl = document.querySelector('.hero-title-jp');
+        const heroTitleEnEl = document.querySelector('.hero-title');
+
+        function onScroll() {
+            const heroHeight = window.innerHeight * 0.8; // matches CSS .hero { height: 80vh }
+            scrollProgress = Math.min(1, Math.max(0, window.scrollY / heroHeight));
+            const clampedY = Math.min(window.scrollY, heroHeight);
+
+            // Canvas is `position: fixed` (doesn't move on its own), so we shift it manually.
+            canvasEl.style.transform = `translate3d(0, ${-clampedY * PARALLAX_RATE}px, 0)`;
+
+            // Titles are in normal flow (scroll naturally at 1x). To make them "slower",
+            // counter-translate by `clampedY * (1 - rate)` so net visual speed = rate.
+            if (heroTitleJpEl) {
+                heroTitleJpEl.style.transform = `translate3d(0, ${clampedY * (1 - TITLE_JP_PARALLAX)}px, 0)`;
+            }
+            if (heroTitleEnEl) {
+                heroTitleEnEl.style.transform = `translate3d(0, ${clampedY * (1 - TITLE_EN_PARALLAX)}px, 0)`;
+            }
+        }
+        window.addEventListener('scroll', onScroll, { passive: true });
+        onScroll();
+
+        // ── Scroll keyframes — edit these (or use the in-page editor) ─────
+        // "position" : where the camera sits in world space
+        // "target"   : where the camera is looking (controls.target)
+        // "zoom"     : camera.zoom multiplier (1 = base, >1 zoomed in, <1 zoomed out).
+        //              This is what OrbitControls modifies on wheel for an ortho cam.
+        // Rotation is implied: camera.lookAt(target) every frame, so capturing
+        // target+position fully describes the orbit pose without quaternion math.
+        const DEFAULT_KEYFRAMES = [
+            { at: 0.000, position: new THREE.Vector3( -0.066, 6.950, 20.482), target: new THREE.Vector3(0.041, 6.521, 0.487), zoom: 19.967 },
+            { at: 0.357, position: new THREE.Vector3( -6.335, 3.943, 19.267), target: new THREE.Vector3(0.047, 6.514, 0.487), zoom:  7.931 },
+            { at: 1.000, position: new THREE.Vector3(-15.920, 7.644, 11.998), target: new THREE.Vector3(0.410, 6.545, 0.597), zoom:  6.919 },
+        ];
+
+        // Subtle "breathing" zoom-in while sitting at keyframe 0. Decays as scroll
+        // begins so there's no snap when the user starts scrolling. Resets when the
+        // user returns to the top after scrolling away (with hysteresis so micro-
+        // wobbles at the top don't keep resetting it).
+        const IDLE_ZOOM_AMOUNT       = 1.5;    // peak additive zoom on top of keyframe value
+        const IDLE_ZOOM_TAU_MS       = 6000;   // time to reach ~63% of peak (exp ease)
+        const IDLE_FADE_RATE         = 8;      // higher = idle effect fades over less scroll
+        // Set just past where idleFade hits 0 (= 1 / IDLE_FADE_RATE) so the delta is
+        // already zero by the time we start pinning idleStartTime — avoids a snap.
+        const IDLE_AWAY_THRESHOLD    = (1 / 8) + 0.02; // ≈ 0.145
+        const IDLE_RETURN_THRESHOLD  = 0.005;          // scrollProgress below which we count you "back"
+        let   idleStartTime          = null;   // gets re-stamped each time you return
+        let   idleScrolledAway       = false;  // hysteresis flag
+        const scrollKeyframes = DEFAULT_KEYFRAMES.map(k => ({
+            at: k.at,
+            position: k.position.clone(),
+            target:   k.target.clone(),
+            zoom:     k.zoom,
+        }));
+
+        // Reused per-frame so the animate loop stops allocating Vector3s.
+        const _interpResult = {
+            position: new THREE.Vector3(),
+            target:   new THREE.Vector3(),
+            zoom:     0,
+        };
+        function interpolateKeyframes(progress) {
+            const kf = scrollKeyframes;
+            let a = kf[0], b = kf[kf.length - 1];
+            for (let i = 0; i < kf.length - 1; i++) {
+                if (progress >= kf[i].at && progress <= kf[i + 1].at) {
+                    a = kf[i]; b = kf[i + 1]; break;
+                }
+            }
+            const span = b.at - a.at;
+            const t = span > 0 ? (progress - a.at) / span : 0;
+            _interpResult.position.lerpVectors(a.position, b.position, t);
+            _interpResult.target.lerpVectors(a.target, b.target, t);
+            _interpResult.zoom = a.zoom + (b.zoom - a.zoom) * t;
+            return _interpResult;
+        }
+        // ──────────────────────────────────────────────────────────────────
+
+        window.addEventListener('resize', () => {
+            const { w, h } = heroSize();
+            const a = w / h;
+            camera.left   = -frustumSize * a / 2;
+            camera.right  =  frustumSize * a / 2;
+            camera.top    =  frustumSize / 2;
+            camera.bottom = -frustumSize / 2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+            composer.setSize(w, h);
+            // composer.setSize also resizes child passes — re-apply the outline downsample.
+            outlinePass.setSize(w / OUTLINE_DOWNSAMPLE, h / OUTLINE_DOWNSAMPLE);
+            animePass.uniforms.resolution.value.set(w, h);
+            const dpr = Math.min(window.devicePixelRatio, 2);
+            fxaaPass.uniforms['resolution'].value.set(1 / (w * dpr), 1 / (h * dpr));
+            if (bgTexture) fitBackgroundCover(bgTexture);
+            onScroll();
+        });
+
+        // ── Keyframe Editor ────────────────────────────────────────────────
+        // v3: zoom is now a camera.zoom multiplier (was frustumSize).
+        const STORAGE_KEY = 'eva.scrollKeyframes.v3';
+        const editorState = { authorMode: false };
+
+        function serializeKeyframes() {
+            return scrollKeyframes.map(k => ({
+                at: k.at,
+                position: { x: k.position.x, y: k.position.y, z: k.position.z },
+                target:   { x: k.target.x,   y: k.target.y,   z: k.target.z   },
+                zoom: k.zoom,
+            }));
+        }
+
+        function persistKeyframes() {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeKeyframes())); }
+            catch (e) { /* storage may be disabled */ }
+        }
+
+        function loadPersistedKeyframes() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return false;
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed) || parsed.length === 0) return false;
+                scrollKeyframes.length = 0;
+                parsed.forEach(k => scrollKeyframes.push({
+                    at: k.at,
+                    position: new THREE.Vector3(k.position.x, k.position.y, k.position.z),
+                    target:   new THREE.Vector3(k.target?.x ?? 0, k.target?.y ?? 0, k.target?.z ?? 0),
+                    zoom: k.zoom,
+                }));
+                return true;
+            } catch (e) { return false; }
+        }
+        loadPersistedKeyframes();
+
+        // Snap the camera to whatever pose corresponds to current scroll progress
+        // so we don't see a "drift-in" lerp from the camera's constructor position.
+        function snapCameraToScroll() {
+            const { position, target, zoom } = interpolateKeyframes(scrollProgress);
+            camera.position.copy(position);
+            controls.target.copy(target);
+            camera.zoom = zoom;
+            camera.updateProjectionMatrix();
+        }
+        snapCameraToScroll();
+
+        const fmt = (n, d = 2) => Number(n).toFixed(d);
+
+        const editorEl   = document.getElementById('kf-editor');
+        const readoutEl  = document.getElementById('kf-readout');
+        const listEl     = document.getElementById('kf-list');
+        const authorChk  = document.getElementById('kf-author');
+        const captureBtn = document.getElementById('kf-capture');
+        const exportBtn  = document.getElementById('kf-export');
+        const resetBtn   = document.getElementById('kf-reset');
+        const collapseBtn = document.getElementById('kf-collapse');
+
+        function setActiveListItem() {
+            const items = listEl.querySelectorAll('.kf-item');
+            items.forEach((el, i) => {
+                el.classList.toggle('active', !editorState.authorMode && Math.abs(scrollKeyframes[i]?.at - scrollProgress) < 0.005);
+            });
+        }
+
+        function renderList() {
+            scrollKeyframes.sort((a, b) => a.at - b.at);
+            listEl.innerHTML = '';
+            scrollKeyframes.forEach((kf, idx) => {
+                const item = document.createElement('div');
+                item.className = 'kf-item';
+
+                const header = document.createElement('div');
+                header.className = 'kf-item-header';
+                header.innerHTML = `
+                    <label>at</label>
+                    <input type="number" step="0.01" min="0" max="1" value="${fmt(kf.at, 3)}">
+                    <span class="spacer"></span>
+                    <button data-act="go">Go</button>
+                    <button data-act="del" class="danger">×</button>
+                `;
+                const atInput = header.querySelector('input');
+                atInput.addEventListener('change', () => {
+                    const v = Math.min(1, Math.max(0, parseFloat(atInput.value) || 0));
+                    kf.at = v;
+                    persistKeyframes();
+                    renderList();
+                });
+                header.querySelector('[data-act="go"]').addEventListener('click', () => {
+                    if (editorState.authorMode) {
+                        camera.position.copy(kf.position);
+                        controls.target.copy(kf.target);
+                        camera.zoom = kf.zoom;
+                        camera.updateProjectionMatrix();
+                    } else {
+                        const heroH = window.innerHeight * HERO_VH;
+                        window.scrollTo({ top: kf.at * heroH, behavior: 'smooth' });
+                    }
+                });
+                header.querySelector('[data-act="del"]').addEventListener('click', () => {
+                    if (scrollKeyframes.length <= 2) {
+                        alert('Need at least 2 keyframes for interpolation.');
+                        return;
+                    }
+                    scrollKeyframes.splice(idx, 1);
+                    persistKeyframes();
+                    renderList();
+                });
+
+                const detail = document.createElement('div');
+                detail.className = 'kf-item-detail';
+                detail.textContent =
+                    `pos    (${fmt(kf.position.x)}, ${fmt(kf.position.y)}, ${fmt(kf.position.z)})\n` +
+                    `target (${fmt(kf.target.x)}, ${fmt(kf.target.y)}, ${fmt(kf.target.z)})\n` +
+                    `zoom   ${fmt(kf.zoom, 3)}`;
+
+                item.append(header, detail);
+                listEl.append(item);
+            });
+            setActiveListItem();
+        }
+
+        function captureCurrent() {
+            const at = parseFloat(scrollProgress.toFixed(3));
+            const kf = {
+                at,
+                position: camera.position.clone(),
+                target:   controls.target.clone(),
+                zoom:     camera.zoom,
+            };
+            const existing = scrollKeyframes.findIndex(k => Math.abs(k.at - at) < 0.005);
+            if (existing >= 0) scrollKeyframes[existing] = kf;
+            else scrollKeyframes.push(kf);
+            persistKeyframes();
+            renderList();
+        }
+
+        function exportCode() {
+            const lines = scrollKeyframes.map(k => {
+                const { x: px, y: py, z: pz } = k.position;
+                const { x: tx, y: ty, z: tz } = k.target;
+                return `    { at: ${k.at.toFixed(3)}, position: new THREE.Vector3(${fmt(px, 3)}, ${fmt(py, 3)}, ${fmt(pz, 3)}), target: new THREE.Vector3(${fmt(tx, 3)}, ${fmt(ty, 3)}, ${fmt(tz, 3)}), zoom: ${fmt(k.zoom, 3)} },`;
+            });
+            const code = `const scrollKeyframes = [\n${lines.join('\n')}\n];`;
+            navigator.clipboard.writeText(code).then(
+                () => { exportBtn.textContent = 'Copied!'; setTimeout(() => exportBtn.textContent = 'Copy code', 1200); },
+                () => { console.log(code); exportBtn.textContent = 'See console'; }
+            );
+        }
+
+        function resetKeyframes() {
+            if (!confirm('Restore default keyframes? Your changes will be lost.')) return;
+            scrollKeyframes.length = 0;
+            DEFAULT_KEYFRAMES.forEach(k => scrollKeyframes.push({
+                at: k.at,
+                position: k.position.clone(),
+                target:   k.target.clone(),
+                zoom:     k.zoom,
+            }));
+            try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+            renderList();
+        }
+
+        authorChk.addEventListener('change', () => {
+            editorState.authorMode = authorChk.checked;
+            controls.enabled = editorState.authorMode;
+        });
+        captureBtn.addEventListener('click', captureCurrent);
+        exportBtn.addEventListener('click', exportCode);
+        resetBtn.addEventListener('click', resetKeyframes);
+        collapseBtn.addEventListener('click', () => editorEl.classList.toggle('collapsed'));
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'k' || e.key === 'K') {
+                if (e.target.tagName === 'INPUT') return;
+                editorEl.classList.toggle('hidden');
+            }
+        });
+
+        controls.enabled = false; // start in playback mode
+        renderList();
+
+        // ── Eye picker ────────────────────────────────────────────────────
+        const eyePickButtons = {
+            L: document.getElementById('eye-pick-L'),
+            R: document.getElementById('eye-pick-R'),
+        };
+        const eyeCopyBtn = document.getElementById('eye-copy');
+        const eyeReadEl  = document.getElementById('eye-readout');
+        const raycaster  = new THREE.Raycaster();
+        const ndc        = new THREE.Vector2();
+        let pickingSlot  = null; // 'L' | 'R' | null
+        let pointerStart = null;
+
+        function setPicking(slot) {
+            pickingSlot = slot;
+            for (const k of ['L', 'R']) {
+                const btn = eyePickButtons[k];
+                const armed = pickingSlot === k;
+                btn.classList.toggle('armed', armed);
+                btn.textContent = armed ? `Click for ${k}…` : `Pick ${k}`;
+            }
+            renderer.domElement.style.cursor = pickingSlot ? 'crosshair' : '';
+        }
+
+        eyePickButtons.L.addEventListener('click', () => setPicking(pickingSlot === 'L' ? null : 'L'));
+        eyePickButtons.R.addEventListener('click', () => setPicking(pickingSlot === 'R' ? null : 'R'));
+
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            if (!pickingSlot) return;
+            pointerStart = { x: e.clientX, y: e.clientY };
+        });
+        renderer.domElement.addEventListener('pointerup', (e) => {
+            if (!pickingSlot || !pointerStart) return;
+            const dx = e.clientX - pointerStart.x;
+            const dy = e.clientY - pointerStart.y;
+            pointerStart = null;
+            if (Math.hypot(dx, dy) > 5) return; // drag, not click — ignore (lets you orbit)
+            if (!eva) return;
+
+            const rect = renderer.domElement.getBoundingClientRect();
+            ndc.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+            ndc.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+            raycaster.setFromCamera(ndc, camera);
+            const hits = raycaster.intersectObject(eva, true);
+            if (hits.length === 0) return;
+
+            const hit = hits[0];
+            eyes[pickingSlot].group.position.copy(hit.point);
+            updateEyeReadout();
+
+            // Log what we hit so you can decide if there's a dedicated eye mesh
+            // worth re-using as the glow shape.
+            const obj = hit.object;
+            const chain = [];
+            let p = obj;
+            while (p) { chain.unshift(p.name || `<${p.type}>`); p = p.parent; }
+            const matName = Array.isArray(obj.material)
+                ? obj.material.map(m => m.name || '?').join(' | ')
+                : (obj.material?.name || '?');
+            console.log(
+                `[eye picker] hit slot=${pickingSlot}\n` +
+                `  mesh:     ${obj.name || '(unnamed)'}  type=${obj.type}\n` +
+                `  material: ${matName}\n` +
+                `  point:    (${hit.point.x.toFixed(3)}, ${hit.point.y.toFixed(3)}, ${hit.point.z.toFixed(3)})\n` +
+                `  parent chain: ${chain.join(' / ')}`,
+                obj
+            );
+        });
+
+        function updateEyeReadout() {
+            const lp = eyes.L.group.position;
+            const rp = eyes.R.group.position;
+            eyeReadEl.textContent =
+                `L  (${fmt(lp.x, 3)}, ${fmt(lp.y, 3)}, ${fmt(lp.z, 3)})\n` +
+                `R  (${fmt(rp.x, 3)}, ${fmt(rp.y, 3)}, ${fmt(rp.z, 3)})`;
+        }
+
+        eyeCopyBtn.addEventListener('click', () => {
+            const lp = eyes.L.group.position;
+            const rp = eyes.R.group.position;
+            const code =
+                `const EYE_DEFAULTS = {\n` +
+                `    L: new THREE.Vector3(${fmt(lp.x, 3)}, ${fmt(lp.y, 3)}, ${fmt(lp.z, 3)}),\n` +
+                `    R: new THREE.Vector3(${fmt(rp.x, 3)}, ${fmt(rp.y, 3)}, ${fmt(rp.z, 3)}),\n` +
+                `};`;
+            navigator.clipboard.writeText(code).then(
+                () => { eyeCopyBtn.textContent = 'Copied!'; setTimeout(() => eyeCopyBtn.textContent = 'Copy pos', 1200); },
+                () => { console.log(code); eyeCopyBtn.textContent = 'See console'; }
+            );
+        });
+        updateEyeReadout();
+
+        // ── Eye-mesh alignment sliders ────────────────────────────────────
+        const adjustSlidersEl = document.getElementById('eye-adjust-sliders');
+        const adjustResetBtn  = document.getElementById('eye-adjust-reset');
+        const adjustCopyBtn   = document.getElementById('eye-adjust-copy');
+
+        // [key, label, min, max, step, isAngle?]
+        const ADJUST_FIELDS = [
+            ['scale', 'scale', 0.3, 2.5,            0.005, false],
+            ['posX',  'pos x', -0.5, 0.5,           0.002, false],
+            ['posY',  'pos y', -0.5, 0.5,           0.002, false],
+            ['posZ',  'pos z', -0.5, 0.5,           0.002, false],
+            ['rotX',  'rot x', -Math.PI, Math.PI,   0.005, true],
+            ['rotY',  'rot y', -Math.PI, Math.PI,   0.005, true],
+            ['rotZ',  'rot z', -Math.PI, Math.PI,   0.005, true],
+        ];
+
+        const adjustSliders = {}; // key -> { input, valEl, isAngle }
+
+        function buildAdjustSliders() {
+            adjustSlidersEl.innerHTML = '';
+            for (const [key, label, min, max, step, isAngle] of ADJUST_FIELDS) {
+                const row = document.createElement('div');
+                row.className = 'kf-slider-row';
+                row.innerHTML = `
+                    <label>${label}</label>
+                    <input type="range" min="${min}" max="${max}" step="${step}" value="${eyeAdjust[key]}">
+                    <span class="kf-slider-val"></span>
+                `;
+                const input = row.querySelector('input');
+                const valEl = row.querySelector('.kf-slider-val');
+                const writeVal = () => {
+                    valEl.textContent = isAngle
+                        ? `${fmt(eyeAdjust[key] * 180 / Math.PI, 1)}°`
+                        : fmt(eyeAdjust[key], 3);
+                };
+                input.addEventListener('input', () => {
+                    eyeAdjust[key] = parseFloat(input.value);
+                    writeVal();
+                    applyEyeMeshAdjust();
+                });
+                adjustSliders[key] = { input, valEl, isAngle };
+                writeVal();
+                adjustSlidersEl.append(row);
+            }
+        }
+        buildAdjustSliders();
+
+        adjustResetBtn.addEventListener('click', () => {
+            eyeAdjust.scale = EYE_MESH_SCALE;
+            eyeAdjust.posX = EYE_MESH_OFFSET.x;
+            eyeAdjust.posY = EYE_MESH_OFFSET.y;
+            eyeAdjust.posZ = EYE_MESH_OFFSET.z;
+            eyeAdjust.rotX = EYE_MESH_ROTATION.x;
+            eyeAdjust.rotY = EYE_MESH_ROTATION.y;
+            eyeAdjust.rotZ = EYE_MESH_ROTATION.z;
+            for (const key of Object.keys(adjustSliders)) {
+                const s = adjustSliders[key];
+                s.input.value = eyeAdjust[key];
+                s.valEl.textContent = s.isAngle
+                    ? `${fmt(eyeAdjust[key] * 180 / Math.PI, 1)}°`
+                    : fmt(eyeAdjust[key], 3);
+            }
+            applyEyeMeshAdjust();
+        });
+
+        adjustCopyBtn.addEventListener('click', () => {
+            const a = eyeAdjust;
+            const code =
+                `const EYE_MESH_SCALE    = ${fmt(a.scale, 3)};\n` +
+                `const EYE_MESH_OFFSET   = new THREE.Vector3(${fmt(a.posX, 3)}, ${fmt(a.posY, 3)}, ${fmt(a.posZ, 3)});\n` +
+                `const EYE_MESH_ROTATION = new THREE.Euler(${fmt(a.rotX, 4)}, ${fmt(a.rotY, 4)}, ${fmt(a.rotZ, 4)});`;
+            navigator.clipboard.writeText(code).then(
+                () => { adjustCopyBtn.textContent = 'Copied!'; setTimeout(() => adjustCopyBtn.textContent = 'Copy align', 1200); },
+                () => { console.log(code); adjustCopyBtn.textContent = 'See console'; }
+            );
+        });
+        // ──────────────────────────────────────────────────────────────────
+
+        // ── Lenis smooth scroll ───────────────────────────────────────────
+        // Lenis interpolates window.scrollY so wheels/touch feel smooth.
+        // With Lenis driving the smoothness, the camera tracks scrollProgress 1:1
+        // (no per-frame easing on the camera itself).
+        const lenis = new Lenis({
+            duration: 1.2, // seconds-ish; higher = slower / heavier
+            easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+            smoothWheel: true,
+            smoothTouch: false,
+        });
+
+        // Pause the 3D pipeline whenever the hero canvas isn't on screen.
+        let heroVisible = true;
+        const heroEl = document.querySelector('.hero');
+        if (heroEl && 'IntersectionObserver' in window) {
+            new IntersectionObserver((entries) => {
+                heroVisible = entries[0].isIntersecting;
+            }, { threshold: 0 }).observe(heroEl);
+        }
+
+        // Eye fade-in completes after EYE_DELAY_MS + EYE_FADE_MS — once `e == 1`
+        // we don't need to keep writing identical values every frame.
+        let eyeAnimDone = false;
+        // Accumulator-based time for the eye animation. Wallclock time fails when
+        // the tab loads in the background or the user reloads scrolled past the
+        // hero — the flash window can elapse before we ever get to render. The
+        // accumulator only ticks during real rendered frames so the flash always
+        // plays out when the user is actually looking at it.
+        let eyeElapsedMs = 0;
+        let lastFrameTime = 0;
+
+        let readoutTick = 0;
+        function animate(time) {
+            requestAnimationFrame(animate);
+            lenis.raf(time);
+
+            // Frame delta capped at 100ms so a hidden-tab pause (or a reload while
+            // scrolled away) doesn't blow past the eye flash window in one tick.
+            const frameDt = lastFrameTime ? Math.min(time - lastFrameTime, 100) : 16.66;
+            lastFrameTime = time;
+
+            // Skip the heavy 3D work when the hero canvas isn't visible.
+            if (!heroVisible) return;
+
+            // Only advance the eye animation clock during real, visible frames.
+            if (eyeStartTime !== null && !eyeAnimDone) eyeElapsedMs += frameDt;
+
+            if (!editorState.authorMode) {
+                // Scroll-driven camera — set directly from current scroll; Lenis is
+                // already smoothing the underlying scroll position for us.
+                const { position: scrollPos, target: scrollTarget, zoom: scrollZoom } = interpolateKeyframes(scrollProgress);
+                camera.position.copy(scrollPos);
+                controls.target.copy(scrollTarget);
+
+                // Idle zoom-in at keyframe 0 — additive, fades out as scroll begins.
+                // While the user is "scrolled away" we keep idleStartTime pinned to
+                // `now` so idleRamp stays at 0; that way nothing pops back in when
+                // they return, and the ramp restarts cleanly the moment they cross
+                // the return threshold near the top.
+                let idleDelta = 0;
+                if (idleStartTime !== null) {
+                    if (scrollProgress > IDLE_AWAY_THRESHOLD) {
+                        idleScrolledAway = true;
+                    }
+                    if (idleScrolledAway) {
+                        idleStartTime = time;
+                        if (scrollProgress < IDLE_RETURN_THRESHOLD) {
+                            idleScrolledAway = false;
+                        }
+                    }
+                    const idleMs   = time - idleStartTime;
+                    const idleRamp = 1 - Math.exp(-idleMs / IDLE_ZOOM_TAU_MS);
+                    const idleFade = Math.max(0, 1 - scrollProgress * IDLE_FADE_RATE);
+                    idleDelta = IDLE_ZOOM_AMOUNT * idleRamp * idleFade;
+                }
+                camera.zoom = scrollZoom + idleDelta;
+                camera.updateProjectionMatrix();
+            }
+
+            // In playback we set position/target directly, so just point the camera —
+            // skip the full OrbitControls update (it's only useful in author mode).
+            if (editorState.authorMode) {
+                controls.update();
+            } else {
+                camera.lookAt(controls.target);
+            }
+            animePass.uniforms.time.value += 0.016;
+
+            // Eyes: fade-in → flash white → settle. Once `eyeAnimDone` is set we
+            // stop touching materials every frame.
+            if (eyeStartTime !== null && !eyeAnimDone) {
+                const dt = eyeElapsedMs;
+
+                if (dt < FADE_END_MS) {
+                    // Phase 1 — fade-in (cubic-bezier ease)
+                    const elapsed = dt - EYE_DELAY_MS;
+                    const t = Math.max(0, Math.min(1, elapsed / EYE_FADE_MS));
+                    const e = eyeEase(t);
+                    for (const eye of [eyes.L, eyes.R]) {
+                        eye.group.scale.setScalar(e);
+                        eye.halo.material.opacity = e * EYE_HALO_OPACITY;
+                        eye.light.intensity       = e * EYE_LIGHT_INTENSITY;
+                    }
+                    for (const m of evaEyeMeshes) {
+                        m.material.color.copy(eyeBaseColor).multiplyScalar(e);
+                    }
+                } else if (dt < FLASH_END_MS) {
+                    // Phase 2 — multi-flash burst (FLASH_COUNT flashes with gaps).
+                    const fe = dt - FADE_END_MS;
+                    const localFe = fe % FLASH_CYCLE_MS;
+                    let f;
+                    if (localFe < FLASH_ATTACK_MS) {
+                        f = localFe / FLASH_ATTACK_MS;
+                    } else if (localFe < FLASH_ATTACK_MS + FLASH_HOLD_MS) {
+                        f = 1;
+                    } else if (localFe < FLASH_DURATION_MS) {
+                        f = Math.max(0, 1 - (localFe - FLASH_ATTACK_MS - FLASH_HOLD_MS) / FLASH_DECAY_MS);
+                    } else {
+                        f = 0; // we're in the dark gap between flashes
+                    }
+                    for (const eye of [eyes.L, eyes.R]) {
+                        eye.group.scale.setScalar(1);
+                        eye.halo.scale.setScalar(EYE_HALO_SIZE * (1 + f * FLASH_HALO_GROW));
+                        eye.halo.material.opacity = EYE_HALO_OPACITY + f * (1 - EYE_HALO_OPACITY);
+                        eye.halo.material.color.copy(eyeBaseColor).lerp(_flashColor, f);
+                        eye.light.intensity = EYE_LIGHT_INTENSITY + f * FLASH_LIGHT_BOOST;
+                        eye.light.color.copy(eyeBaseColor).lerp(_flashColor, f);
+                    }
+                    for (const m of evaEyeMeshes) {
+                        m.material.color.copy(eyeBaseColor).lerp(_flashColor, f);
+                    }
+                } else {
+                    // Phase 3 — settle to clean steady-state and stop the loop work
+                    for (const eye of [eyes.L, eyes.R]) {
+                        eye.group.scale.setScalar(1);
+                        eye.halo.scale.setScalar(EYE_HALO_SIZE);
+                        eye.halo.material.opacity = EYE_HALO_OPACITY;
+                        eye.halo.material.color.copy(eyeBaseColor);
+                        eye.light.intensity = EYE_LIGHT_INTENSITY;
+                        eye.light.color.copy(eyeBaseColor);
+                    }
+                    for (const m of evaEyeMeshes) {
+                        m.material.color.copy(eyeBaseColor);
+                    }
+                    eyeAnimDone = true;
+                }
+            }
+
+            composer.render();
+
+            // Throttle readout updates to ~10fps
+            if (++readoutTick % 6 === 0) {
+                readoutEl.textContent =
+                    `scroll  ${fmt(scrollProgress * 100, 1)}%   ${editorState.authorMode ? '· AUTHOR' : '· playback'}\n` +
+                    `pos     (${fmt(camera.position.x)}, ${fmt(camera.position.y)}, ${fmt(camera.position.z)})\n` +
+                    `target  (${fmt(controls.target.x)}, ${fmt(controls.target.y)}, ${fmt(controls.target.z)})\n` +
+                    `zoom    ${fmt(camera.zoom, 3)}`;
+                setActiveListItem();
+            }
+        }
+        animate();
+
+    </script>
+</body>
+</html>
