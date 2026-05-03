@@ -16,14 +16,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="https://raw.githubusercontent.com/JDFBdev/EVATEST/main/styles.css" />
 </head>
 <body>
 
     <section class="hero">
         <canvas></canvas>
         <div class="hero-title-jp" aria-hidden="true">
-            <img src="title%20japanese.svg" alt="">
+            <img src="https://raw.githubusercontent.com/JDFBdev/EVATEST/main/title%20japanese.svg" alt="">
         </div>
         <div class="hero-title">
             <div class="hero-title__neon">NEON GENESIS</div>
@@ -125,7 +125,7 @@
         // appears before the EVA does.
         let bgTexture = null;
         let modelLoaded = false;
-        new THREE.TextureLoader().load('background%20hangar.webp', (tex) => {
+        new THREE.TextureLoader().load('https://raw.githubusercontent.com/JDFBdev/EVATEST/main/background%20hangar.webp', (tex) => {
             tex.colorSpace = THREE.SRGBColorSpace;
             tex.minFilter = THREE.LinearFilter; // avoid mipmap artifacts on the bg quad
             tex.matrixAutoUpdate = false;
@@ -441,7 +441,7 @@
         const evaEyeMeshes = [];   // populated during model load — the actual eye geometry
         const evaEyeOriginals = []; // { mesh, position, quaternion, scale } for delta-based tuning
 
-        loader.load('EVA/scene.gltf', function (gltf) {
+        loader.load('https://raw.githubusercontent.com/JDFBdev/EVATEST/main/EVA/scene.gltf', function (gltf) {
             eva = gltf.scene;
             eva.position.set(0, 0, 0);
             eva.scale.set(.01, .01, .01);
